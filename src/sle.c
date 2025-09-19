@@ -2,186 +2,188 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define EPSILON 0.000001
+#define EPSILON 1e-6
 
-void sle(double **matrix, int rows, int columns, double **roots, int *error);
-double **invert(double **matrix, int rows, int columns, int *error);
-double det(double **matrix, int rows, int columns, int *error);
-double **transpose(double **matrix, int rows, int columns, int *error);
-double findCofactor(double **matrix, int rows_amount, int columns_amount, int row, int columns, int *error);
-int input(double ***matrix, int *n, int *m);
-double **singleAllocation(int rows_amount, int columns_amount, int *error);
-void swapRows(double **matrix, int row1, int row2);
-double *extractColumn(double **matrix, int rows, int column, int *error);
-void replaceColumn(double **matrix, const double *column, int rows_amount, int column_index);
-void copyColumn(double **matrix, double **matrix2, int rows, int column_index);
-void copyMatrix(double **matrix1, double **matrix2, int rows, int columns);
-void freeMemory(double **matrix, double *roots);
-void outputRoots(double *roots, int rows, int error);
+// Выделение памяти для квадратной матрицы
+double **alloc_matrix(int rows, int columns) {
+    double **matrix = malloc(rows * sizeof(double *) + rows * columns * sizeof(double));
+    if (!matrix) return NULL;
+    double *data = (double *)(matrix + rows);
+    for (int i = 0; i < rows; i++) {
+        matrix[i] = data + i * columns;
+    }
+    return matrix;
+}
+
+// Освобождение памяти матрицы
+void free_matrix(double **matrix) {
+    if (matrix) free(matrix);
+}
+
+// Копирование матрицы src в dst
+void copy_matrix(double **src, double **dst, int rows, int columns) {
+    for (int i = 0; i < rows; i++)
+        for (int j = 0; j < columns; j++) dst[i][j] = src[i][j];
+}
+
+// Поиск определителя методом Гаусса с частичным выбором опорного элемента
+double determinant(double **matrix, int size, int *error) {
+    double det = 1.0;
+    double sign = 1.0;
+    double **temp = alloc_matrix(size, size);
+    if (!temp) {
+        *error = 1;
+        return 0.0;
+    }
+    copy_matrix(matrix, temp, size, size);
+
+    for (int i = 0; i < size; i++) {
+        // Поиск максимального по модулю опорного элемента
+        int pivot = i;
+        for (int r = i + 1; r < size; r++) {
+            if (fabs(temp[r][i]) > fabs(temp[pivot][i])) {
+                pivot = r;
+            }
+        }
+        if (fabs(temp[pivot][i]) < EPSILON) {
+            det = 0.0;
+            break;  // нулевой столбец — определитель 0
+        }
+        if (pivot != i) {
+            double *tmp_row = temp[i];
+            temp[i] = temp[pivot];
+            temp[pivot] = tmp_row;
+            sign = -sign;
+        }
+        double diag = temp[i][i];
+        det *= diag;
+        for (int r = i + 1; r < size; r++) {
+            double coef = temp[r][i] / diag;
+            for (int c = i; c < size; c++) {
+                temp[r][c] -= coef * temp[i][c];
+            }
+        }
+    }
+
+    free_matrix(temp);
+    return sign * det;
+}
+
+// Извлечение столбца из матрицы
+double *extract_column(double **matrix, int rows, int column, int *error) {
+    double *col = malloc(rows * sizeof(double));
+    if (!col) {
+        *error = 1;
+        return NULL;
+    }
+    for (int i = 0; i < rows; i++) {
+        col[i] = matrix[i][column];
+    }
+    return col;
+}
+
+// Замена столбца матрицы
+void replace_column(double **matrix, const double *column, int rows, int col_index) {
+    for (int i = 0; i < rows; i++) {
+        matrix[i][col_index] = column[i];
+    }
+}
+
+// Ввод расширенной матрицы (n × (n+1))
+int input(double ***matrix, int *rows, int *columns) {
+    if (scanf("%d %d", rows, columns) != 2) return 1;
+    if (*rows <= 0 || *columns != *rows + 1) return 1;
+
+    *matrix = alloc_matrix(*rows, *columns);
+    if (!*matrix) return 1;
+
+    for (int i = 0; i < *rows; i++) {
+        for (int j = 0; j < *columns; j++) {
+            if (scanf("%lf", &((*matrix)[i][j])) != 1) {
+                free_matrix(*matrix);
+                *matrix = NULL;
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+// Вывод корней решения
+void output_roots(const double *roots, int n, int error) {
+    if (error) {
+        printf("n/a");
+        return;
+    }
+    for (int i = 0; i < n; i++) {
+        printf("%.6lf", roots[i]);
+        if (i != n - 1) printf(" ");
+    }
+}
+
+// Решение СЛАУ методом Крамера
+void solve_sle(double **matrix, int rows, int columns, double **roots, int *error) {
+    int n = rows;
+    double **work_matrix = alloc_matrix(n, n);
+    if (!work_matrix) {
+        *error = 1;
+        return;
+    }
+    copy_matrix(matrix, work_matrix, n, n);
+
+    double *last_col = extract_column(matrix, n, columns - 1, error);
+    if (*error) {
+        free_matrix(work_matrix);
+        return;
+    }
+
+    double det_main = determinant(work_matrix, n, error);
+    if (*error || fabs(det_main) < EPSILON) {
+        *error = 1;
+        free(last_col);
+        free_matrix(work_matrix);
+        return;
+    }
+
+    *roots = malloc(n * sizeof(double));
+    if (!*roots) {
+        *error = 1;
+        free(last_col);
+        free_matrix(work_matrix);
+        return;
+    }
+
+    for (int i = 0; i < n; i++) {
+        replace_column(work_matrix, last_col, n, i);
+        double det_i = determinant(work_matrix, n, error);
+        if (*error) {
+            free(last_col);
+            free_matrix(work_matrix);
+            return;
+        }
+        (*roots)[i] = det_i / det_main;
+        copy_matrix(matrix, work_matrix, n, n);
+    }
+
+    free(last_col);
+    free_matrix(work_matrix);
+}
 
 int main(void) {
     double **matrix = NULL;
     double *roots = NULL;
     int rows = 0, columns = 0;
     int error = 0;
+
     error = input(&matrix, &rows, &columns);
     if (!error) {
-        sle(matrix, rows, columns, &roots, &error);
+        solve_sle(matrix, rows, columns, &roots, &error);
     }
-    outputRoots(roots, rows, error);
-    freeMemory(matrix, roots);
-    return 0;
-}
 
-int input(double ***matrix, int *rows_amount, int *columns_amount) {
-    int error = 0;
-    if (1 != scanf("%d", rows_amount) || *rows_amount <= 0) {
-        error = 1;
-    }
-    if (error || 1 != scanf("%d", columns_amount) || *columns_amount <= 0 ||
-        *rows_amount != *columns_amount - 1) {
-        error = 1;
-    }
-    *matrix = singleAllocation(*rows_amount, *columns_amount, &error);
-    for (int i = 0; i < *rows_amount && 0 == error; i++) {
-        for (int j = 0; j < *columns_amount && 0 == error; j++) {
-            if (1 != scanf("%lf", (*matrix)[i] + j)) {
-                error = 1;
-            }
-        }
-    }
-    return error;
-}
+    output_roots(roots, rows, error);
 
-void outputRoots(double *roots, int rows, int error) {
-    if (error) {
-        printf("n/a");
-    } else {
-        for (int i = 0; i < rows - 1; i++) {
-            printf("%.6lf ", roots[i]);
-        }
-        printf("%.6lf", roots[rows - 1]);
-    }
-}
-
-void sle(double **matrix, int rows, int columns, double **roots, int *error) {
-    double **working_matrix = singleAllocation(rows, columns - 1, error);
-    copyMatrix(matrix, working_matrix, rows, columns - 1);
-    double *last_column = extractColumn(matrix, rows, columns - 1, error);
-    double determinant = det(working_matrix, rows, columns - 1, error);
-    *roots = malloc(rows * sizeof(double));
-    if (*error || fabs(determinant) < EPSILON || NULL == *roots) {
-        *error = 1;
-    } else {
-        for (int i = 0; i < rows; i++) {
-            replaceColumn(working_matrix, last_column, rows, i);
-            (*roots)[i] = det(working_matrix, rows, columns - 1, error) / determinant;
-            copyColumn(working_matrix, matrix, rows, i);
-        }
-    }
-    free(working_matrix);
-    free(last_column);
-}
-
-double **singleAllocation(int rows_amount, int columns_amount, int *error) {
-    double **matrix = NULL;
-    if (0 == *error) {
-        matrix = malloc(rows_amount * columns_amount * sizeof(double) + rows_amount * sizeof(double *));
-    }
-    if (NULL == matrix) {
-        *error = 1;
-    }
-    double *beginning = NULL != matrix ? (double *)(matrix + rows_amount) : NULL;
-    for (int i = 0; i < rows_amount && 0 == *error; i++) {
-        matrix[i] = beginning + columns_amount * i;
-    }
-    return matrix;
-}
-
-void copyMatrix(double **matrix1, double **matrix2, int rows, int columns) {
-    for (int i = 0; i < rows; i++) {
-        for (int j = 0; j < columns; j++) {
-            matrix2[i][j] = matrix1[i][j];
-        }
-    }
-}
-
-double det(double **matrix, int rows, int columns, int *error) {
-    double determinant = 1.;
-    double sign = 1.;
-    double **spare_matrix = singleAllocation(rows, columns, error);
-    copyMatrix(matrix, spare_matrix, rows, columns);
-    for (int i = 0; i < rows && fabs(determinant) >= EPSILON && 0 == *error; i++) {
-        double diagonal_element = spare_matrix[i][i];
-        int another_row = i;
-        while (fabs(diagonal_element) < EPSILON && fabs(determinant) >= EPSILON) {
-            if (fabs(spare_matrix[another_row][i]) >= EPSILON) {
-                swapRows(spare_matrix, i, another_row);
-                diagonal_element = spare_matrix[i][i];
-                sign *= -1;
-            }
-            another_row++;
-            if (rows == another_row) {
-                determinant = 0.;
-            }
-        }
-        for (int j = i + 1; j < rows && fabs(determinant) >= EPSILON; j++) {
-            double multiplier = spare_matrix[j][i] / diagonal_element;
-            for (int k = i; k < columns; k++) {
-                spare_matrix[j][k] -= spare_matrix[i][k] * multiplier;
-            }
-        }
-        determinant *= diagonal_element;
-    }
-    determinant = fabs(determinant) >= EPSILON ? sign * determinant : fabs(determinant);
-    free(spare_matrix);
-    return determinant;
-}
-
-void swapRows(double **matrix, int row1, int row2) {
-    double *temp = matrix[row1];
-    matrix[row1] = matrix[row2];
-    matrix[row2] = temp;
-}
-
-double *extractColumn(double **matrix, int rows, int column, int *error) {
-    double *extracted_column = malloc(rows * sizeof(double));
-    if (NULL == extracted_column) {
-        *error = 1;
-    } else {
-        for (int i = 0; i < rows; i++) {
-            extracted_column[i] = matrix[i][column];
-        }
-    }
-    return extracted_column;
-}
-
-void replaceColumn(double **matrix, const double *column, int rows_amount, int column_index) {
-    for (int i = 0; i < rows_amount; i++) {
-        matrix[i][column_index] = column[i];
-    }
-}
-
-void copyColumn(double **matrix, double **matrix2, int rows_amount, int column_index) {
-    for (int i = 0; i < rows_amount; i++) {
-        matrix[i][column_index] = matrix2[i][column_index];
-    }
-}
-
-double **transpose(double **matrix, int rows, int columns, int *error) {
-    double **result = NULL;
-    if (*error == 0) {
-        result = singleAllocation(rows, columns, error);
-        for (int i = 0; i < rows && 0 == *error; i++) {
-            for (int j = 0; j < columns && 0 == *error; j++) {
-                result[i][j] = matrix[j][i];
-            }
-        }
-    }
-    return result;
-}
-
-void freeMemory(double **matrix, double *roots) {
-    free(matrix);
+    free_matrix(matrix);
     free(roots);
+
+    return error ? 1 : 0;
 }
